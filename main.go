@@ -159,7 +159,7 @@ func (ss *Sessions) getAllSessionsInNetwork(localhost *Host) {
 			Receiver: gateway,
 		})
 		fmt.Println(sender.String())
-		// working here 
+		// working here
 	}
 }
 
@@ -207,7 +207,8 @@ func recvARP(handle *pcap.Handle, SourceProtAddress []byte, ch chan []byte) {
 			}
 
 			if layerType == layers.LayerTypeARP {
-				if bytes.Equal(arpLayer.SourceProtAddress, SourceProtAddress) && bytes.Equal(arpLayer.DstProtAddress, attacker.IP) {
+				if bytes.Equal(arpLayer.SourceProtAddress, SourceProtAddress) &&
+					bytes.Equal(arpLayer.DstProtAddress, attacker.IP) {
 					ch <- arpLayer.SourceHwAddress
 				} else {
 					fmt.Println(arpLayer.SourceProtAddress)
