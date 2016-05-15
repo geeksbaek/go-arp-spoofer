@@ -13,6 +13,13 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
+type AddressPair struct {
+	DstHwAddress   []byte
+	DstProtAddress []byte
+	SrcHwAddress   []byte
+	SrcProtAddress []byte
+}
+
 type Host struct {
 	IP      []byte
 	MAC     []byte
@@ -166,7 +173,13 @@ func (ss *Sessions) getAllSessionsInNetwork(localhost *Host) {
 func (host *Host) getMACAddr(handle *pcap.Handle) {
 	ch := make(chan []byte)
 	go recvARP(handle, host.IP, ch)
-	sendARP(handle, host.IP, broadcast, attacker.IP, attacker.MAC, layers.ARPRequest)
+	sendARP(handle, &AddressPair{
+		DstProtAddress: host.IP,
+		DstHwAddress:   broadcast,
+		SrcProtAddress: attacker.IP,
+		SrcHwAddress:   attacker.MAC,
+	}, layers.ARPRequest)
+	
 	host.MAC = <-ch
 	fmt.Println(host.MAC)
 }
@@ -221,26 +234,26 @@ func recvARP(handle *pcap.Handle, SourceProtAddress []byte, ch chan []byte) {
 	return
 }
 
-func sendARP(handle *pcap.Handle, DstProtAddress, DstHwAddress, SourceProtAddress, SourceHwAddress []byte, Operation uint16) {
+func sendARP(handle *pcap.Handle, addressPiar *AddressPair, Operation uint16) {
 	arpLayer := &layers.ARP{
 		AddrType:        layers.LinkTypeEthernet,
 		Protocol:        layers.EthernetTypeIPv4,
 		HwAddressSize:   byte(6),
 		ProtAddressSize: byte(4),
 		DstHwAddress: func() []byte {
-			if bytes.Equal(DstHwAddress, broadcast) {
+			if bytes.Equal(addressPiar.DstHwAddress, broadcast) {
 				return zerofill
 			}
-			return DstHwAddress
+			return addressPiar.DstHwAddress
 		}(),
-		DstProtAddress:    DstProtAddress,
-		SourceHwAddress:   SourceHwAddress,
-		SourceProtAddress: SourceProtAddress,
+		DstProtAddress:    addressPiar.DstProtAddress,
+		SourceHwAddress:   addressPiar.SrcHwAddress,
+		SourceProtAddress: addressPiar.SrcProtAddress,
 		Operation:         Operation,
 	}
 	ethernetLayer := &layers.Ethernet{
-		SrcMAC:       net.HardwareAddr(SourceHwAddress),
-		DstMAC:       net.HardwareAddr(DstHwAddress),
+		SrcMAC:       net.HardwareAddr(addressPiar.SrcHwAddress),
+		DstMAC:       net.HardwareAddr(addressPiar.DstHwAddress),
 		EthernetType: layers.EthernetTypeARP,
 	}
 	// And create the packet with the layers
