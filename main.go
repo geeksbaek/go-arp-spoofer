@@ -34,13 +34,13 @@ type Session struct {
 type Sessions []*Session
 
 var (
-	snapshot_len int32 = 1024
-	promiscuous  bool  = true
-	err          error
-	timeout      time.Duration = time.Second
-	handle       *pcap.Handle
-	buffer       gopacket.SerializeBuffer
-	options      gopacket.SerializeOptions
+	snapshotLen = int32(1024)
+	promiscuous = true
+	err         error
+	timeout     = 1 * time.Second
+	handle      *pcap.Handle
+	buffer      gopacket.SerializeBuffer
+	options     gopacket.SerializeOptions
 	// Will reuse these for each packet
 	ethLayer layers.Ethernet
 	arpLayer layers.ARP
@@ -86,7 +86,7 @@ func main() {
 }
 
 func openPcap(device pcap.Interface) *pcap.Handle {
-	handle, err = pcap.OpenLive(device.Name, snapshot_len, promiscuous, timeout)
+	handle, err = pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func (host *Host) getMACAddr(handle *pcap.Handle) {
 		SrcProtAddress: attacker.IP,
 		SrcHwAddress:   attacker.MAC,
 	}, layers.ARPRequest)
-	
+
 	host.MAC = <-ch
 	fmt.Println(host.MAC)
 }
