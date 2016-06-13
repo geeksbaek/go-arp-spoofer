@@ -1,10 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"regexp"
-	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -27,29 +27,25 @@ var (
 )
 
 func parse(device pcap.Interface) {
-	snapshot_len := int32(1024)
-	promiscuous := false
-	timeout := 30 * time.Second
-	var err error
-	var handle *pcap.Handle
-
-	// Open device
-	handle, err = pcap.OpenLive(device.Name, snapshot_len, promiscuous, timeout)
+	handle, err := pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer handle.Close()
 
-	// Use the handle as a packet source to process all packets
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
 		if tcpLayer != nil {
 			tcpPacket := tcpLayer.(*layers.TCP)
 			http := tcpPacket.Payload
-			for url, re := range reMap {
-				parsed := re.FindSubmatch(http)
-				if len(parsed) == 3 {
+
+			if len(http) > 5 && (bytes.Equal(http[:4], []byte("GET ")) || bytes.Equal(http[:5], []byte("POST "))) {
+				for url, re := range reMap {
+					parsed := re.FindSubmatch(http)
+					if len(parsed) != 3 {
+						continue
+					}
 					fmt.Println(url, ":", string(parsed[1]), string(parsed[2]))
 				}
 			}

