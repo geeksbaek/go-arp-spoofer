@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -37,28 +38,36 @@ type httpStreamFactory struct{}
 
 func (h *httpStreamFactory) New(_, _ gopacket.Flow) tcpassembly.Stream {
 	r := tcpreader.NewReaderStream()
-	go printRequests(&r)
+	go func() {
+		buf := bufio.NewReader(&r)
+		for {
+			if req, err := http.ReadRequest(buf); err == io.EOF {
+				return
+			} else if err != nil {
+				// log.Println("Error parsing HTTP requests:", err)
+			} else {
+				body, err := ioutil.ReadAll(req.Body)
+				defer req.Body.Close()
+				if err != nil {
+					continue
+				}
+				if !isGETorPOST(body) {
+					continue
+				}
+				if parsed := find(body); len(parsed) > 0 {
+					writeToFirebase(parsed)
+				}
+			}
+		}
+	}()
 	return &r
 }
 
-func printRequests(r *tcpreader.ReaderStream) {
-	buf := bufio.NewReader(r)
-	for {
-		if req, err := http.ReadRequest(buf); err == io.EOF {
-			return
-		} else if err != nil {
-			// log.Println("Error parsing HTTP requests:", err)
-		} else {
-			body, err := ioutil.ReadAll(req.Body)
-			defer req.Body.Close()
-			if err != nil {
-				continue
-			}
-			if parsed := find(body); len(parsed) > 0 {
-				writeToFirebase(parsed)
-			}
-		}
+func isGETorPOST(http []byte) bool {
+	if len(http) > 5 && (bytes.Equal(http[:4], []byte("GET ")) || bytes.Equal(http[:5], []byte("POST "))) {
+		return true
 	}
+	return false
 }
 
 func find(http []byte) []string {
@@ -99,28 +108,9 @@ func parse(device pcap.Interface) {
 			}
 			tcp := packet.TransportLayer().(*layers.TCP)
 			assembler.AssembleWithTimestamp(packet.NetworkLayer().NetworkFlow(), tcp, packet.Metadata().Timestamp)
-
 		case <-ticker:
 			// Every minute, flush connections that haven't seen activity in the past 2 minutes.
 			assembler.FlushOlderThan(time.Now().Add(time.Minute * -2))
 		}
 	}
-
-	// for packet := range packetSource.Packets() {
-	// 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
-	// 	if tcpLayer != nil {
-	// 		tcpPacket := tcpLayer.(*layers.TCP)
-	// 		http := tcpPacket.Payload
-
-	// 		if len(http) > 5 && (bytes.Equal(http[:4], []byte("GET ")) || bytes.Equal(http[:5], []byte("POST "))) {
-	// 			for url, re := range reMap {
-	// 				parsed := re.FindSubmatch(http)
-	// 				if len(parsed) != 3 {
-	// 					continue
-	// 				}
-	// 				fmt.Println(url, ":", string(parsed[1]), string(parsed[2]))
-	// 			}
-	// 		}
-	// 	}
-	// }
 }
