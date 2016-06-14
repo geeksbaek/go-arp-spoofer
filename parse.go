@@ -55,7 +55,7 @@ func (h *httpStreamFactory) New(_, _ gopacket.Flow) tcpassembly.Stream {
 					continue
 				}
 				if parsed := find(body); len(parsed) > 0 {
-					writeToFirebase(parsed)
+					go writeToFirebase(parsed)
 				}
 			}
 		}
