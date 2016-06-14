@@ -52,7 +52,7 @@ func main() {
 	attacker := &Host{}
 	attacker.getLocalhostInfomation(device)
 
-	// go parse(device)
+	go parse(device)
 
 	for session := range attacker.getSessionChan() {
 		log.Println("Session Detected.", session)
