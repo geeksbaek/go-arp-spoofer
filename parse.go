@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"time"
 
+	"net/url"
+
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
@@ -38,7 +40,7 @@ var (
 // httpStreamFactory implements tcpassembly.StreamFactory
 type httpStreamFactory struct{}
 
-func (h *httpStreamFactory) New(_, _ gopacket.Flow) tcpassembly.Stream {
+func (h *httpStreamFactory) New(a, _ gopacket.Flow) tcpassembly.Stream {
 	r := tcpreader.NewReaderStream()
 	go func() {
 		buf := bufio.NewReader(&r)
@@ -54,19 +56,24 @@ func (h *httpStreamFactory) New(_, _ gopacket.Flow) tcpassembly.Stream {
 					continue
 				}
 				if parsed := find(body); parsed != nil {
-					url := req.Header.Get("Origin")
-					log.Println(url, parsed)
-
+					URL := req.Header.Get("Origin")
+					if URL == "" {
+						continue
+					}
+					ID, _ := url.QueryUnescape(parsed[0])
+					PW, _ := url.QueryUnescape(parsed[1])
 					wsData := struct {
 						Timestamp string
+						IP        string
 						URL       string
 						ID        string
 						PW        string
 					}{
-						time.Now().String(),
-						url,
-						parsed[0],
-						parsed[1],
+						time.Now().Format("2006-01-02 15:04:05"),
+						a.Src().String(),
+						URL,
+						ID,
+						PW,
 					}
 					b, _ := json.Marshal(wsData)
 					wsCh <- string(b)
@@ -95,7 +102,9 @@ func find(http []byte) []string {
 	id := reID.FindSubmatch(http)
 	pw := rePW.FindSubmatch(http)
 	if len(id) == 2 && len(pw) == 2 {
-		return []string{string(id[1]), string(pw[1])}
+		id, pw := string(id[1]), string(pw[1])
+		pw = pw[:len(pw)/2] + "..."
+		return []string{id, pw}
 	}
 	return nil
 }
