@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
-	"github.com/toqueteos/webbrowser"
+	"github.com/pkg/browser"
 )
 
 var wsupgrader = websocket.Upgrader{
@@ -27,7 +27,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func serve() {
-	webbrowser.Open("http://localhost:5000")
+	browser.OpenURL("http://localhost:5000")
 	http.Handle("/", http.FileServer(http.Dir("wwwroot")))
 	http.HandleFunc("/ws", wsHandler)
 	http.ListenAndServe(":5000", nil)
