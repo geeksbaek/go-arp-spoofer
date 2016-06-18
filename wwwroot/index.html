@@ -1,0 +1,22 @@
+<html>
+
+<head>
+    <script src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
+</head>
+
+<body>
+    <h3>ID/PW Board</h3>
+    <pre id="output"></pre>
+
+    <script>
+      url = 'ws://localhost:5000/ws';
+      c = new WebSocket(url);
+      c.onmessage = function(msg){
+        $("#output").append(msg.data)
+        console.log(msg.data)
+      }
+    </script>
+
+</body>
+
+</html>
