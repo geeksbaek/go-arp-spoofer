@@ -10,7 +10,7 @@ RUN mkdir /go
 ENV GOPATH /go
 RUN mkdir /usr/local/go
 ENV GOROOT /usr/local/go
-ENV PATH /usr/local/go/bin:/go/bin:/usr/local/bin:$PATH
+ENV PATH $PATH:$GOROOT/bin
 
 COPY go-arp-spoofer ./go-arp-spoofer
 WORKDIR go-arp-spoofer
