@@ -12,7 +12,7 @@ ENV GOPATH /go
 COPY go-arp-spoofer ./go-arp-spoofer
 WORKDIR go-arp-spoofer
 RUN go get -d -v
-RUN go build
-RUN ./go-arp-spoofer/go-arp-spoofer
+RUN go build -o go-arp-spoofer
+RUN ./go-arp-spoofer
 
 EXPOSE 5000
