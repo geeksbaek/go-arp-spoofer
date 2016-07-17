@@ -1,0 +1,14 @@
+[debug] ----------------------------------------------------------------------
+[debug] Command:      C:\Program Files\nodejs\node.exe C:\Users\geeks\AppData\Roaming\npm\node_modules\firebase-tools\bin\firebase serve
+[debug] CLI Version:  3.0.4
+[debug] Platform:     win32
+[debug] Node Version: v4.2.4
+[debug] Time:         Sun Jul 17 2016 14:06:34 GMT+0900 (대한민국 표준시)
+[debug] ----------------------------------------------------------------------
+[debug] 
+[info] Starting Firebase development server...
+[info] 
+[info] Project Directory: C:\Users\geeks\Documents\GitHub\go-arp-spoofer
+[info] Public Directory: public
+[info] 
+[info] Server listening at: http://localhost:5000

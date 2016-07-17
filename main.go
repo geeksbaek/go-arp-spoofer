@@ -48,8 +48,6 @@ var (
 )
 
 func main() {
-	go serve()
-
 	wg := new(sync.WaitGroup)
 	for _, device := range findAllAbleDevs() {
 		attacker := &Host{}
@@ -57,9 +55,7 @@ func main() {
 		if len(attacker.MAC) == 0 {
 			continue
 		}
-
 		go parse(device)
-
 		sessionCh, err := attacker.getSessionChan(device)
 		if err != nil {
 			log.Println(device.Name, err)
