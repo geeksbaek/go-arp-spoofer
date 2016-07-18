@@ -14,6 +14,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/pkg/browser"
 )
 
 type AddressPair struct {
@@ -44,10 +45,12 @@ var (
 	broadcast = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	zerofill  = []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 
-	wsCh = make(chan string)
+	viewPageURL = "https://ccit-matched-data.firebaseapp.com/"
 )
 
 func main() {
+	browser.OpenURL(viewPageURL)
+
 	wg := new(sync.WaitGroup)
 	for _, device := range findAllAbleDevs() {
 		attacker := &Host{}
@@ -93,10 +96,9 @@ func findAllAbleDevs() (ret []pcap.Interface) {
 				break
 			}
 		}
-		if !ok {
-			continue
+		if ok {
+			ret = append(ret, device)
 		}
-		ret = append(ret, device)
 	}
 	return
 }

