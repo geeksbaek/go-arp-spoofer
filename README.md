@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/geeksbaek/go-arp-spoofer.svg?branch=master)](https://travis-ci.org/geeksbaek/go-arp-spoofer)
+
 # release
 https://github.com/geeksbaek/go-arp-spoofer/releases
 
