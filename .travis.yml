@@ -10,6 +10,4 @@ go:
   - 1.7rc5
   - 1.7rc6
 install:
- - go get github.com/google/gopacket
- - go get github.com/google/gopacket/layers
- - go get github.com/google/gopacket/tcpassembly
+ - go get -v
