@@ -7,3 +7,4 @@ go:
   - tip
 install:
   - sudo apt-get install libpcap-dev
+  - go get -v
